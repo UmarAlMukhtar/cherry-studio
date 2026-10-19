@@ -11,6 +11,7 @@ import { BaseService } from '@main/core/lifecycle/BaseService'
 import { createUniqueModelId, ENDPOINT_TYPE, type Model, MODEL_CAPABILITY } from '@shared/data/types/model'
 import { isGatewayRoutableModel } from '@shared/utils/model'
 
+import type * as AttachmentRoutingModule from '../messages/attachmentRouting'
 import type * as ImageTransportRegistryModule from '../provider/custom/imageTransportRegistry'
 import type * as ListModelsModule from '../provider/listModels'
 import type { AiStreamRequest } from '../types/requests'
@@ -66,6 +67,7 @@ const mockReconcileSkills = vi.fn()
 const mockRegisterBuiltinTools = vi.fn()
 const mockInstallProviderUserAgentInterceptor = vi.fn(() => vi.fn())
 const mockRecordRequest = vi.fn()
+const mockPrepareChatMessages = vi.fn()
 const mockAddFileRefsTx = vi.fn()
 
 vi.mock('@application', () => ({
@@ -237,6 +239,17 @@ vi.mock('../runtime/aiSdk/retry/buildApiKeyFallbackModels', () => ({
 vi.mock('../runtime/aiSdk/retry/retryPolicy', () => ({
   readRetryPolicy: () => mockReadRetryPolicy()
 }))
+
+vi.mock('../messages/attachmentRouting', async (importOriginal) => {
+  const actual = await importOriginal<typeof AttachmentRoutingModule>()
+  return {
+    ...actual,
+    prepareChatMessages: (messages: never, context: never) =>
+      mockPrepareChatMessages.getMockImplementation()
+        ? mockPrepareChatMessages(messages, context)
+        : actual.prepareChatMessages(messages, context)
+  }
+})
 
 const { listModels: listModelsFromProviderActual } =
   await vi.importActual<typeof ListModelsModule>('../provider/listModels')
@@ -1810,6 +1823,61 @@ describe('AiService tool approval', () => {
         onRetryEvent: expect.any(Function)
       })
     )
+  })
+
+  it('requires audio fallback support after probing an audio-only WebM', async () => {
+    const service = createService()
+    mockReadRetryPolicy.mockReturnValue({
+      enabled: true,
+      maxAttempts: 3,
+      backoffEnabled: true,
+      fallbackModelIds: ['fallback::model']
+    })
+    vi.spyOn(service as unknown as AiServicePrivate, 'buildAgentParamsFor').mockResolvedValue({
+      sdkConfig: { providerId: 'test-provider', providerSettings: {}, modelId: 'test-model' },
+      credentialReceipt: { attribution: 'explicit', id: 'key-a', masked: 'sk-a****aaaa' },
+      provider: { id: 'test-provider', name: 'Test Provider', reportsActualCost: false },
+      model: { id: 'test-provider::test-model', name: 'Test Model', capabilities: [] },
+      tools: undefined,
+      plugins: [],
+      system: undefined,
+      options: {},
+      hookParts: [],
+      assistant: undefined,
+      nativeFileSupport: { image: false, pdf: false, audio: true, video: false },
+      fileAttachments: []
+    })
+    const original = {
+      id: 'message-1',
+      role: 'user',
+      parts: [{ type: 'file', mediaType: 'video/webm', url: 'file:///clip.webm', filename: 'clip.webm' }]
+    }
+    mockPrepareChatMessages.mockImplementation(async (messages: Array<{ parts?: Array<{ mediaType?: string }> }>) =>
+      messages.map((message) => ({
+        ...message,
+        parts: message.parts?.map((part) =>
+          part.mediaType === 'video/webm' ? { ...part, mediaType: 'audio/webm' } : part
+        )
+      }))
+    )
+
+    try {
+      await service.streamText({
+        conversation: { id: 'conversation-1', topicId: 'topic-1' },
+        trigger: 'submit-message',
+        messages: [original],
+        requestOptions: { signal: new AbortController().signal }
+      })
+
+      expect(mockPrepareChatMessages).toHaveBeenCalled()
+      expect(mockBuildFallbackModels).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requiredNativeFileSupport: { image: false, pdf: false, audio: true, video: false }
+        })
+      )
+    } finally {
+      mockPrepareChatMessages.mockReset()
+    }
   })
 
   it('honors maxRetries: 0 for generateText without building fallbacks', async () => {
