@@ -158,6 +158,7 @@ const mocks = vi.hoisted(() => ({
   getModelByKey: vi.fn(),
   applicationGet: vi.fn(),
   getPhysicalPath: vi.fn(),
+  getById: vi.fn(),
   probeReadable: vi.fn(),
   consumeWarmQuery: vi.fn(),
   prepareTrace: vi.fn(),
@@ -497,7 +498,7 @@ describe('ClaudeCodeRuntimeDriver', () => {
       }
       if (name === 'ClaudeCodeTraceBridgeService')
         return { prepareTrace: mocks.prepareTrace, refreshTraceContext: mocks.refreshTraceContext }
-      if (name === 'FileManager') return { getPhysicalPath: mocks.getPhysicalPath }
+      if (name === 'FileManager') return { getPhysicalPath: mocks.getPhysicalPath, getById: mocks.getById }
       if (name === 'MediaAnalysisService') return { analyzeToCompactText: mocks.analyzeMedia }
       if (name === 'ClaudeCodeProcessManager') return { spawn: mocks.processManagerSpawn }
       // teardownSession reaches the session-state service through the settingsBuilder facade.
@@ -506,6 +507,9 @@ describe('ClaudeCodeRuntimeDriver', () => {
     })
     mocks.consumeWarmQuery.mockResolvedValue(undefined)
     mocks.getPhysicalPath.mockImplementation((id: string) => `/managed/${id}`)
+    mocks.getById.mockImplementation(async (id: string) => ({
+      ext: id === 'entry-video' ? 'mp4' : id === 'entry-aif' ? 'aif' : id === 'entry-caf' ? 'caf' : 'pdf'
+    }))
     mocks.probeReadable.mockResolvedValue('readable')
     mocks.prepareTrace.mockResolvedValue(undefined)
     mocks.collectFileAttachments.mockReturnValue([])
@@ -1634,6 +1638,59 @@ describe('ClaudeCodeRuntimeDriver', () => {
     expect(content).toContain('- "spec.pdf": /managed/entry-secret')
     expect(content).toContain(`- "spec.pdf" (handle: ${pdfHandle})`)
     expect(content).not.toContain(`- "clip.mp4" (handle: ${videoHandle})\n- "spec.pdf"`)
+    void connection.close()
+  })
+
+  it.each([
+    { filename: 'voice.caf', mediaType: 'audio/x-caf', fileEntryId: 'entry-caf', lookupFails: false },
+    { filename: 'voice.aif', mediaType: 'audio/x-aiff', fileEntryId: 'entry-caf', lookupFails: false },
+    { filename: 'voice.aif', mediaType: 'audio/x-aiff', fileEntryId: 'entry-aif', lookupFails: true }
+  ])('keeps the filesystem path for $filename when stored media is unreadable', async (testCase) => {
+    // audio/x-caf is routed as audio, but ReadFileTool dispatches only known audio extensions and classifies caf as OTHER.
+    const queryQueue = createAsyncQueue<any>()
+    const query = { ...queryQueue.iterable, interrupt: vi.fn(), close: vi.fn() }
+    mocks.createClaudeQuery.mockReturnValue(query)
+    if (testCase.lookupFails) mocks.getById.mockRejectedValueOnce(new Error('missing'))
+    mocks.buildRequest.mockResolvedValueOnce({
+      connectionConfig: {
+        rebuildSignature: 'sig-1',
+        live: { toolPolicy: { permissionMode: null, disabledTools: [], mcps: [] } }
+      },
+      key: 'warm-key',
+      options: { model: 'sonnet' },
+      settings: { mcpServers: { 'assistant-files': { type: 'sdk' } } },
+      sdkModelId: 'sonnet-sdk',
+      initializeTimeoutMs: 100
+    })
+    const connection = await new ClaudeCodeRuntimeDriver().connect({
+      sessionId: 'session-1',
+      agentId: 'agent-1',
+      modelId: 'claude-code::sonnet'
+    })
+    const sdkInput = mocks.createClaudeQuery.mock.calls[0][0].prompt
+    const nextInput = sdkInput[Symbol.asyncIterator]().next()
+
+    await connection.send({
+      message: {
+        ...userMessage(),
+        data: {
+          parts: [
+            { type: 'text', text: 'what is said here' },
+            {
+              type: 'file',
+              url: `file:///tmp/${testCase.filename}`,
+              mediaType: testCase.mediaType,
+              filename: testCase.filename,
+              providerMetadata: { cherry: { fileEntryId: testCase.fileEntryId } }
+            }
+          ]
+        }
+      }
+    })
+
+    const content = (await nextInput).value.message.content as string
+    expect(content).toContain(`/managed/${testCase.fileEntryId}`)
+    expect(content).not.toContain('Attached audio and video (call mcp__assistant-files__read_file')
     void connection.close()
   })
 

@@ -1202,10 +1202,23 @@ async function materializeUserContent(
   )
   const readOnlyMediaEntryIds = new Set(
     readOnlyAttachmentMedia
-      ? firstPartyFileParts.flatMap((part) => {
-          const fileEntryId = readCherryMeta(part)?.fileEntryId
-          return fileEntryId && isAudioOrVideoFilePart(part) ? [fileEntryId] : []
-        })
+      ? (
+          await Promise.all(
+            firstPartyFileParts.map(async (part) => {
+              const fileEntryId = readCherryMeta(part)?.fileEntryId
+              if (!fileEntryId) return []
+              let ext: string | null | undefined
+              try {
+                ext = (await application.get('FileManager').getById(fileEntryId))?.ext
+              } catch {
+                return []
+              }
+              if (ext == null) return []
+              const fileType = getFileTypeByExt(ext)
+              return fileType === 'audio' || fileType === 'video' ? [fileEntryId] : []
+            })
+          )
+        ).flat()
       : []
   )
 
@@ -1356,15 +1369,6 @@ function appendReadOnlyMediaPrompt(
     .join('\n')
   const section = `Attached audio and video (call mcp__assistant-files__read_file with the opaque attachment handle; the tool returns timestamped analysis):\n${list}`
   return text.trim() ? `${text}\n\n${section}` : section
-}
-
-function isAudioOrVideoFilePart(part: FileUIPart): boolean {
-  const mediaType = part.mediaType?.toLowerCase() ?? ''
-  if (mediaType.startsWith('audio/') || mediaType.startsWith('video/')) return true
-  const filename = part.filename ?? ''
-  const extension = filename.includes('.') ? filename.slice(filename.lastIndexOf('.') + 1) : ''
-  const fileType = getFileTypeByExt(extension)
-  return fileType === 'audio' || fileType === 'video'
 }
 
 interface ResolvedAttachmentPath {
