@@ -168,3 +168,15 @@ export function resolveNativeFileSupport(
     ...(mediaSupport.audioMediaTypes ? { audioMediaTypes: mediaSupport.audioMediaTypes } : {})
   }
 }
+
+/**
+ * Prepared audio can be replayed only when the fallback converter accepts every
+ * required MIME. An absent allow-list still means any audio MIME.
+ */
+export function acceptsPreparedAudio(required: NativeFileSupport, fallback: NativeFileSupport): boolean {
+  const requiredTypes = required.audioMediaTypes
+  if (!required.audio || !requiredTypes?.length) return true
+  const allowed = fallback.audioMediaTypes
+  if (!allowed) return true
+  return requiredTypes.every((mediaType) => allowed.includes(mediaType))
+}
