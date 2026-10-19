@@ -1,3 +1,4 @@
+import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import { describe, expect, it } from 'vitest'
 
 import { ENDPOINT_TYPE, MODEL_CAPABILITY } from '@shared/data/types/model'
@@ -172,7 +173,32 @@ describe('resolveNativeFileSupport', () => {
     expect(google.audioMediaTypes).toBeUndefined()
     expect(openrouter.audio).toBe(true)
     expect(openrouter.video).toBe(true)
-    expect(openrouter.audioMediaTypes).toBeUndefined()
+    expect(openrouter.audioMediaTypes).toContain('audio/ogg')
+    expect(openrouter.audioMediaTypes).not.toContain('audio/webm')
+  })
+
+  it('matches OpenRouter native audio routing to the installed converter', async () => {
+    const support = resolveNativeFileSupport(
+      makeProvider({ id: 'openrouter' }),
+      makeModel({
+        id: 'openrouter::multimodal',
+        apiModelId: 'multimodal',
+        name: 'multimodal',
+        capabilities: [MODEL_CAPABILITY.AUDIO_RECOGNITION]
+      }),
+      { aiSdkProviderId: 'openrouter', runtimeProviderId: 'openrouter' }
+    )
+    const fetch = () => Promise.reject(new Error('converter accepted audio'))
+    const model = createOpenRouter({ apiKey: 'test', fetch })('test')
+    const generate = (mediaType: string) =>
+      model.doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'file', data: Buffer.from('audio'), mediaType }] }]
+      })
+
+    expect(support.audioMediaTypes).not.toContain('audio/webm')
+    await expect(generate('audio/webm')).rejects.toThrow('Unsupported audio format: "audio/webm"')
+    expect(support.audioMediaTypes).toContain('audio/ogg')
+    await expect(generate('audio/ogg')).rejects.toThrow('converter accepted audio')
   })
 
   it('forces text for providers known to break on native files (qiniu)', () => {

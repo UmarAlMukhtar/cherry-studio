@@ -83,7 +83,29 @@ const NO_NATIVE_AUDIO_VIDEO_PROVIDER_IDS = new Set<AppProviderId>([
 ])
 
 /** AI SDK converters with native support for both audio and video file parts. */
-const NATIVE_AUDIO_VIDEO_PROVIDER_IDS = new Set<AppProviderId>(['google', 'google-vertex', 'openrouter'])
+const NATIVE_AUDIO_VIDEO_PROVIDER_IDS = new Set<AppProviderId>(['google', 'google-vertex'])
+
+/** Audio MIME types accepted by the installed OpenRouter converter. */
+const OPENROUTER_AUDIO_MEDIA_TYPES = [
+  'audio/mpeg',
+  'audio/mp3',
+  'audio/x-wav',
+  'audio/wave',
+  'audio/wav',
+  'audio/ogg',
+  'audio/vorbis',
+  'audio/aac',
+  'audio/x-aac',
+  'audio/m4a',
+  'audio/x-m4a',
+  'audio/mp4',
+  'audio/aiff',
+  'audio/x-aiff',
+  'audio/flac',
+  'audio/x-flac',
+  'audio/pcm16',
+  'audio/pcm24'
+] as const
 
 /** OpenAI chat-compatible converters: partial audio support, no video file parts. */
 const OPENAI_CHAT_MEDIA_PROVIDER_IDS = new Set<AppProviderId>([
@@ -117,6 +139,9 @@ function resolveNativeAudioVideoSupport(
     return { audio: false, video: false }
   }
   if (NATIVE_AUDIO_VIDEO_PROVIDER_IDS.has(runtimeProviderId)) return { audio: true, video: true }
+  if (runtimeProviderId === 'openrouter') {
+    return { audio: true, video: true, audioMediaTypes: OPENROUTER_AUDIO_MEDIA_TYPES }
+  }
   if (OPENAI_CHAT_MEDIA_PROVIDER_IDS.has(runtimeProviderId)) return openAiChatAudioVideo()
 
   // Multi-backend providers retain their own provider id, so their resolved

@@ -1,9 +1,12 @@
 import type { UIMessage } from 'ai'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { NativeFileSupport } from '@main/ai/runtime/aiSdk/params/nativeFileSupport'
+import { resolveNativeFileSupport, type NativeFileSupport } from '@main/ai/runtime/aiSdk/params/nativeFileSupport'
 import type { CherryMessagePart, CherryUIMessage } from '@shared/data/types/message'
+import { ENDPOINT_TYPE, MODEL_CAPABILITY } from '@shared/data/types/model'
 
+import { makeModel } from '../../__tests__/fixtures/model'
+import { makeProvider } from '../../__tests__/fixtures/provider'
 import type * as FileProcessorModule from '../fileProcessor'
 
 vi.mock('@logger', () => ({
@@ -414,6 +417,32 @@ describe('prepareChatMessages — routing', () => {
       mediaAnalysisMock.mockResolvedValueOnce('transcript')
 
       const [out] = await run([fileWithEntry('e1', 'clip.webm', 'video/webm')], openAiChatAudio)
+
+      expect(mediaAnalysisMock).toHaveBeenCalledWith({ kind: 'entry', entryId: 'e1' }, undefined)
+      expect(out.parts.some((part) => part.type === 'file')).toBe(false)
+      expect(textOf(out.parts)[0]).toBe('Attached file "clip.webm":\ntranscript')
+    })
+
+    it('routes audio-only WebM through analysis for an OpenRouter model', async () => {
+      getByIdMock.mockResolvedValueOnce({ ext: 'webm' })
+      probeMock.mockResolvedValueOnce(audioOnly)
+      mediaAnalysisMock.mockResolvedValueOnce('transcript')
+      const support = resolveNativeFileSupport(
+        makeProvider({ id: 'openrouter' }),
+        makeModel({
+          id: 'openrouter::multimodal',
+          apiModelId: 'multimodal',
+          name: 'multimodal',
+          capabilities: [MODEL_CAPABILITY.AUDIO_RECOGNITION]
+        }),
+        {
+          aiSdkProviderId: 'openrouter',
+          runtimeProviderId: 'openrouter',
+          endpointType: ENDPOINT_TYPE.OPENAI_CHAT_COMPLETIONS
+        }
+      )
+
+      const [out] = await run([fileWithEntry('e1', 'clip.webm', 'video/webm')], support)
 
       expect(mediaAnalysisMock).toHaveBeenCalledWith({ kind: 'entry', entryId: 'e1' }, undefined)
       expect(out.parts.some((part) => part.type === 'file')).toBe(false)
