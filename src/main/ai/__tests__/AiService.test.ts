@@ -4,7 +4,7 @@ import { trace } from '@opentelemetry/api'
 import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
 import { defaultServiceInstances } from '@test-mocks/main/application'
 import { MockMainPreferenceServiceUtils } from '@test-mocks/main/PreferenceService'
-import { modelMessageSchema } from 'ai'
+import { modelMessageSchema, type UIMessage } from 'ai'
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import { BaseService } from '@main/core/lifecycle/BaseService'
@@ -1847,7 +1847,7 @@ describe('AiService tool approval', () => {
       nativeFileSupport: { image: false, pdf: false, audio: true, video: false },
       fileAttachments: []
     })
-    const original = {
+    const original: UIMessage = {
       id: 'message-1',
       role: 'user',
       parts: [{ type: 'file', mediaType: 'video/webm', url: 'file:///clip.webm', filename: 'clip.webm' }]
