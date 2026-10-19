@@ -13,6 +13,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { agentTable } from '@data/db/schemas/agent'
 import { mcpServerTable } from '@data/db/schemas/mcpServer'
 import { queueRetiredAgentRuntimeMigration } from '@data/services/retiredAgentRuntimeMigration'
+import type * as AgentMediaPreface from '@main/ai/runtime/agentMediaPreface'
 import type * as UserDataSqliteGuard from '@main/ai/toolApproval/userDataSqliteGuard'
 import { CHERRY_CLOUD_MODEL_GROUP, CHERRY_CLOUD_PROVIDER_ID } from '@shared/data/presets/cherryai'
 
@@ -112,6 +113,7 @@ const mocks = vi.hoisted(() => ({
   setShellCommandPrefix: vi.fn(),
   getShellEnv: vi.fn(),
   isStreaming: false,
+  collectMediaNotes: null as null | (() => Promise<string[]>),
   steeringMode: 'one-at-a-time' as 'all' | 'one-at-a-time',
   sessionId: 'sess-1' as string | undefined,
   sessionFile: '/cherry/agents/pi/sessions/2026-07-06T00-00-00-000Z_sess-1.jsonl' as string | undefined
@@ -206,6 +208,14 @@ vi.mock('./piSdk', async (importOriginal) => ({
   loadPiAi: async () => ({ InMemoryCredentialStore: class {} }),
   loadPiApiStreamSimple: mocks.loadPiApiStreamSimple
 }))
+vi.mock('@main/ai/runtime/agentMediaPreface', async (importOriginal) => {
+  const actual = await importOriginal<typeof AgentMediaPreface>()
+  return {
+    ...actual,
+    collectAgentMediaNotes: (message: Parameters<AgentMediaPreface.collectAgentMediaNotes>[0]) =>
+      mocks.collectMediaNotes ? mocks.collectMediaNotes() : actual.collectAgentMediaNotes(message)
+  }
+})
 vi.mock('@main/utils/rtk', () => ({ rtkRewrite: vi.fn().mockResolvedValue(null) }))
 vi.mock('@main/utils/shellEnv', () => ({
   getShellEnv: mocks.getShellEnv,
@@ -297,6 +307,17 @@ function createDeferred<T>() {
   return { promise, resolve, reject }
 }
 
+function mediaInput(): AgentRuntimeUserInput {
+  return {
+    message: {
+      id: 'msg-audio',
+      data: {
+        parts: [{ type: 'file', mediaType: 'audio/wav', filename: 'clip.wav', url: 'file:///tmp/clip.wav' }]
+      }
+    } as AgentRuntimeUserInput['message']
+  }
+}
+
 function userInput(text: string, systemReminder = false): AgentRuntimeUserInput {
   return {
     message: {
@@ -360,6 +381,7 @@ beforeEach(() => {
   mocks.validateGitBashPath.mockImplementation((shellPath?: string | null) => shellPath ?? null)
   mocks.getShellEnv.mockResolvedValue({ PATH: '/opt/homebrew/bin:/usr/bin' })
   mocks.isStreaming = false
+  mocks.collectMediaNotes = null
   mocks.steeringMode = 'one-at-a-time'
   mocks.sessionId = SESSION_ID
   mocks.sessionFile = SESSION_FILE
@@ -1413,6 +1435,43 @@ describe('PiRuntimeConnection', () => {
     expect(mocks.clearQueue).toHaveBeenCalledOnce()
     // The turn still surfaces the error terminal; steer-undelivered precedes it.
     expect(events.at(-1)?.type).toBe('error')
+  })
+
+  it('requeues an accepted media steer when the turn ends during analysis', async () => {
+    mocks.isStreaming = true
+    const deferred = createDeferred<string[]>()
+    mocks.collectMediaNotes = () => deferred.promise
+    const conn = await new PiRuntimeConnection(input).start()
+    const steer = mediaInput()
+
+    expect(conn.redirect(steer)).toBe(true)
+    expect(mocks.steer).not.toHaveBeenCalled()
+
+    mocks.isStreaming = false
+    mocks.subscribeCb!({ type: 'agent_end', messages: [], willRetry: false } as unknown as AgentSessionEvent)
+    const events = await collectUntilTerminal(conn.events)
+    expect(events.find((event) => event.type === 'steer-undelivered')).toMatchObject({ inputs: [steer] })
+
+    deferred.resolve(['Attached file "clip.wav":\nkept'])
+    await deferred.promise
+    await Promise.resolve()
+    expect(mocks.steer).not.toHaveBeenCalled()
+  })
+
+  it('reports media-analysis failure and drops the reservation while the turn is active', async () => {
+    mocks.isStreaming = true
+    mocks.collectMediaNotes = () => Promise.reject(new Error('analysis failed'))
+    const conn = await new PiRuntimeConnection(input).start()
+
+    expect(conn.redirect(mediaInput())).toBe(true)
+    const failed = await collectUntilTerminal(conn.events)
+    expect(failed.find((event) => event.type === 'error')).toMatchObject({ error: new Error('analysis failed') })
+    expect(mocks.steer).not.toHaveBeenCalled()
+
+    mocks.subscribeCb!({ type: 'agent_end', messages: [], willRetry: false } as unknown as AgentSessionEvent)
+    const finished = await collectUntilTerminal(conn.events)
+    expect(finished.find((event) => event.type === 'steer-undelivered')).toBeUndefined()
+    expect(finished.at(-1)?.type).toBe('turn-complete')
   })
 
   it('surfaces steer rejection as an error and un-stashes the input', async () => {

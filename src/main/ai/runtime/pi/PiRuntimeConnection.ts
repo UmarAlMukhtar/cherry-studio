@@ -545,13 +545,13 @@ export class PiRuntimeConnection implements AgentRuntimeConnection {
     const session = this.session
     if (!session?.isStreaming) return false
 
-    // Paths stay in the prompt so tools can open the file. Audio and video also
-    // carry compact analysis; pi's native image channel stays unused.
-    const steer = (content: string) => {
-      const wrappedText = wrapSteerReminder(content)
-      const pending: PendingSteer = { input }
-      this.pendingSteers.push(pending)
-      void session.steer(wrappedText).catch((error) => {
+    // Reserve before analysis so a turn that ends first can still requeue this steer.
+    // Audio and video keep their path in the prompt; pi's image channel stays unused.
+    const pending: PendingSteer = { input }
+    this.pendingSteers.push(pending)
+    const deliver = (content: string) => {
+      if (!this.pendingSteers.includes(pending)) return
+      void session.steer(wrapSteerReminder(content)).catch((error) => {
         this.removePendingSteer(pending)
         if (this.closed) return
         logger.error('pi steer failed', error as Error)
@@ -560,17 +560,19 @@ export class PiRuntimeConnection implements AgentRuntimeConnection {
     }
 
     if (!hasAgentMediaAttachment(input.message)) {
-      steer(buildAgentUserContent(input.message))
+      deliver(buildAgentUserContent(input.message))
       return true
     }
 
     void collectAgentMediaNotes(input.message)
       .then((notes) => {
         if (this.closed) return
-        steer(buildAgentUserContent(input.message, notes))
+        deliver(buildAgentUserContent(input.message, notes))
       })
       .catch((error) => {
-        if (this.closed) return
+        const stillPending = this.pendingSteers.includes(pending)
+        this.removePendingSteer(pending)
+        if (!stillPending || this.closed) return
         logger.error('pi media analysis failed', error as Error)
         this.eventQueue.push({ type: 'error', error })
       })
