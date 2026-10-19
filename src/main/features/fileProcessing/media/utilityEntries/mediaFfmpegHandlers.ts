@@ -23,6 +23,7 @@ import type {
   MediaFfmpegInitData
 } from '@main/features/fileProcessing/media/mediaFfmpegProcess'
 import {
+  audioExtractStreamMap,
   classifyFfprobeResult,
   relativeInputSeekMs,
   sniffEbmlDocType,
@@ -280,7 +281,7 @@ async function probeJson(
       '-print_format',
       'json',
       '-show_entries',
-      'format=duration,start_time,format_name:format_tags=DOCTYPE,DocType,doctype:stream=index,codec_type,codec_name,duration,start_time:stream_disposition=attached_pic,default',
+      'format=duration,start_time,format_name:format_tags=DOCTYPE,DocType,doctype:stream=index,codec_type,codec_name,channels,duration,start_time:stream_disposition=attached_pic,default',
       '-i',
       filePath
     ],
@@ -290,6 +291,24 @@ async function probeJson(
   )
   if (result.truncated) throw new Error('Media probe output exceeded buffer; refusing truncated JSON')
   return JSON.parse(result.stdout)
+}
+
+async function sourceAudioMap(
+  filePath: string,
+  signal: AbortSignal,
+  logger: Logger,
+  pidRegistryPath?: string
+): Promise<string | undefined> {
+  try {
+    const probe = await probeJson(filePath, signal, logger, pidRegistryPath)
+    if (!probe || typeof probe !== 'object') return undefined
+    return audioExtractStreamMap((probe as FfprobeResult).streams ?? [])
+  } catch (error) {
+    signal.throwIfAborted()
+    if (!isUnavailableProbeMetadata(error)) throw error
+    logger.warn(`audio stream map unavailable: ${error instanceof Error ? error.message : String(error)}`)
+    return undefined
+  }
 }
 
 function probeDurationMs(probe: unknown): number {
@@ -375,14 +394,12 @@ export const mediaFfmpegHandlers: UtilityProcessHandlers<MediaFfmpegContract> = 
     mkdirSync(outputDir, { recursive: true })
     const prefix = await fileHashPrefix(filePath)
     const wavPath = join(outputDir, `${prefix}-16k-mono.wav`)
+    const map = await sourceAudioMap(filePath, signal, logger, pidRegistryPath)
+    const args = ['-y', '-i', filePath]
+    if (map) args.push('-map', map)
+    args.push('-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', '-f', 'wav', wavPath)
 
-    await runCommand(
-      ffmpegPath,
-      ['-y', '-i', filePath, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', '-f', 'wav', wavPath],
-      signal,
-      logger,
-      { ffmpeg: true, pidRegistryPath }
-    )
+    await runCommand(ffmpegPath, args, signal, logger, { ffmpeg: true, pidRegistryPath })
 
     const totalMs = probeDurationMs(await probeJson(wavPath, signal, logger, pidRegistryPath))
     const wavSize = statSync(wavPath).size
