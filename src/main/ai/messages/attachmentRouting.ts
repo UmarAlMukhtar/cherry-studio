@@ -151,11 +151,11 @@ function isNative(ext: string, fileType: FileType, ns: NativeFileSupport, mediaT
   return false
 }
 
-/** Dispatch MIME for extensions whose stored type is outside the OpenAI chat audio allow-list. */
+/** Unresolved audio is treated as accepted, so a recognized extension carries its MIME. */
 function dispatchAudioMediaType(bareExt: string): string | undefined {
-  const ext = bareExt.replace(/^\./, '').toLowerCase()
-  if (ext !== 'm4a' && ext !== 'opus') return undefined
-  return mime.getType(ext) ?? undefined
+  const normalizedExt = bareExt.replace(/^\./, '').toLowerCase()
+  if (getFileTypeByExt(normalizedExt) !== FILE_TYPE.AUDIO) return undefined
+  return mime.getType(normalizedExt) ?? undefined
 }
 
 /** WebM is audio or video only after probe. Unambiguous extensions keep their static type. */
@@ -166,7 +166,7 @@ async function resolveAttachmentFileType(
 ): Promise<{ fileType: FileType; mediaType?: string }> {
   if (bareExt.replace(/^\./, '').toLowerCase() !== 'webm') {
     const fileType = getFileTypeByExt(bareExt)
-    const mediaType = fileType === FILE_TYPE.AUDIO ? dispatchAudioMediaType(bareExt) : undefined
+    const mediaType = dispatchAudioMediaType(bareExt)
     return mediaType ? { fileType, mediaType } : { fileType }
   }
   const probe = await application.get('MediaAnalysisService').probe({ kind: 'entry', entryId }, signal)
