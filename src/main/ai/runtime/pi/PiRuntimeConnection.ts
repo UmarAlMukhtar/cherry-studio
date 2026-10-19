@@ -181,9 +181,10 @@ export class PiRuntimeConnection implements AgentRuntimeConnection {
   /** Manual compact is a Cherry user turn, but pi only emits compaction events for `compact()` —
    *  no `agent_end`. This flag lets that path close exactly one host turn without making auto-compacts terminal. */
   private manualCompactInFlight = false
-  /** Steers accepted by pi but not yet observed as delivered. pi emits the delivery boundary as a
-   *  user `message_start`; default steering mode is one-at-a-time, so the delivery drain is mode-aware. */
+  /** Reservations in redirect order. A media steer stays here during analysis, before `session.steer`. */
   private readonly pendingSteers: PendingSteer[] = []
+  /** Steers already handed to pi, in submission order. Delivery claims this list, not unsent reservations. */
+  private readonly submittedSteers: PendingSteer[] = []
 
   readonly events = this.eventQueue
 
@@ -550,7 +551,8 @@ export class PiRuntimeConnection implements AgentRuntimeConnection {
     const pending: PendingSteer = { input }
     this.pendingSteers.push(pending)
     const deliver = (content: string) => {
-      if (!this.pendingSteers.includes(pending)) return
+      if (!this.pendingSteers.includes(pending) || this.submittedSteers.includes(pending)) return
+      this.submittedSteers.push(pending)
       void session.steer(wrapSteerReminder(content)).catch((error) => {
         this.removePendingSteer(pending)
         if (this.closed) return
@@ -685,7 +687,7 @@ export class PiRuntimeConnection implements AgentRuntimeConnection {
 
     if (event.type === 'tool_execution_start') this.startToolSpan(event)
 
-    if (isUserMessageStart(event) && this.pendingSteers.length > 0) {
+    if (isUserMessageStart(event) && this.submittedSteers.length > 0) {
       const delivered = this.takeDeliveredSteers()
       if (delivered.length > 0) this.eventQueue.push({ type: 'steer-boundary', inputs: delivered })
     }
@@ -732,6 +734,7 @@ export class PiRuntimeConnection implements AgentRuntimeConnection {
     this.promptRunActive = false
     this.maybeEmitResumeToken()
     const undelivered = this.pendingSteers.splice(0).map((pending) => pending.input)
+    this.submittedSteers.length = 0
     if (undelivered.length > 0) {
       // pi does not drain its steering queue when a run ends. The host owns re-queuing.
       this.session?.clearQueue()
@@ -944,13 +947,20 @@ export class PiRuntimeConnection implements AgentRuntimeConnection {
 
   private takeDeliveredSteers(): AgentRuntimeUserInput[] {
     const mode = this.session?.steeringMode ?? 'one-at-a-time'
-    const count = mode === 'all' ? this.pendingSteers.length : 1
-    return this.pendingSteers.splice(0, count).map((pending) => pending.input)
+    const count = mode === 'all' ? this.submittedSteers.length : 1
+    const claimed = this.submittedSteers.splice(0, count)
+    for (const pending of claimed) {
+      const index = this.pendingSteers.indexOf(pending)
+      if (index !== -1) this.pendingSteers.splice(index, 1)
+    }
+    return claimed.map((pending) => pending.input)
   }
 
   private removePendingSteer(pending: PendingSteer): void {
     const index = this.pendingSteers.indexOf(pending)
     if (index !== -1) this.pendingSteers.splice(index, 1)
+    const submittedIndex = this.submittedSteers.indexOf(pending)
+    if (submittedIndex !== -1) this.submittedSteers.splice(submittedIndex, 1)
   }
 
   private emitContextUsage(): void {
