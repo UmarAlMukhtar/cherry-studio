@@ -212,7 +212,7 @@ vi.mock('@main/ai/runtime/agentMediaPreface', async (importOriginal) => {
   const actual = await importOriginal<typeof AgentMediaPreface>()
   return {
     ...actual,
-    collectAgentMediaNotes: (message: Parameters<AgentMediaPreface.collectAgentMediaNotes>[0]) =>
+    collectAgentMediaNotes: (message: Parameters<typeof AgentMediaPreface.collectAgentMediaNotes>[0]) =>
       mocks.collectMediaNotes ? mocks.collectMediaNotes() : actual.collectAgentMediaNotes(message)
   }
 })
