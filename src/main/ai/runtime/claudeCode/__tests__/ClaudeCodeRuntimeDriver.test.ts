@@ -1698,7 +1698,15 @@ describe('ClaudeCodeRuntimeDriver', () => {
       {
         ...userMessage(),
         data: {
-          parts: [{ type: 'file', url: 'file:///tmp/clip.mp4', mediaType: 'video/mp4', filename: 'clip.mp4' }]
+          parts: [
+            {
+              type: 'file',
+              url: 'file:///tmp/clip.mp4',
+              mediaType: 'video/mp4',
+              filename: 'clip.mp4',
+              providerMetadata: { cherry: { fileEntryId: 'entry-video' } }
+            }
+          ]
         }
       },
       controller.signal
