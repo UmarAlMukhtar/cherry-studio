@@ -2,6 +2,7 @@ import type * as NodeFs from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import { SpanStatusCode, trace } from '@opentelemetry/api'
@@ -114,6 +115,7 @@ const mocks = vi.hoisted(() => ({
   getShellEnv: vi.fn(),
   isStreaming: false,
   collectMediaNotes: null as null | (() => Promise<string[]>),
+  analyzeMedia: vi.fn(),
   steeringMode: 'one-at-a-time' as 'all' | 'one-at-a-time',
   sessionId: 'sess-1' as string | undefined,
   sessionFile: '/cherry/agents/pi/sessions/2026-07-06T00-00-00-000Z_sess-1.jsonl' as string | undefined
@@ -135,7 +137,8 @@ vi.mock('@application', async () => {
   const { createMockApplication } = await import('@test-mocks/main/application')
   const application = createMockApplication({
     IpcApiService: { broadcast: mocks.broadcast },
-    McpCatalogService: { listTools: mocks.listMcpTools }
+    McpCatalogService: { listTools: mocks.listMcpTools },
+    MediaAnalysisService: { analyzeToCompactText: mocks.analyzeMedia }
   } as never)
   return {
     application: {
@@ -212,8 +215,10 @@ vi.mock('@main/ai/runtime/agentMediaPreface', async (importOriginal) => {
   const actual = await importOriginal<typeof AgentMediaPreface>()
   return {
     ...actual,
-    collectAgentMediaNotes: (message: Parameters<typeof AgentMediaPreface.collectAgentMediaNotes>[0]) =>
-      mocks.collectMediaNotes ? mocks.collectMediaNotes() : actual.collectAgentMediaNotes(message)
+    collectAgentMediaNotes: (
+      message: Parameters<typeof AgentMediaPreface.collectAgentMediaNotes>[0],
+      signal?: AbortSignal
+    ) => (mocks.collectMediaNotes ? mocks.collectMediaNotes() : actual.collectAgentMediaNotes(message, signal))
   }
 })
 vi.mock('@main/utils/rtk', () => ({ rtkRewrite: vi.fn().mockResolvedValue(null) }))
@@ -318,6 +323,20 @@ function mediaInput(): AgentRuntimeUserInput {
   }
 }
 
+function twoMediaInput(firstPath: string, secondPath: string): AgentRuntimeUserInput {
+  return {
+    message: {
+      id: 'msg-two-media',
+      data: {
+        parts: [
+          { type: 'file', mediaType: 'audio/wav', filename: 'first.wav', url: pathToFileURL(firstPath).href },
+          { type: 'file', mediaType: 'video/mp4', filename: 'second.mp4', url: pathToFileURL(secondPath).href }
+        ]
+      }
+    } as AgentRuntimeUserInput['message']
+  }
+}
+
 function userInput(text: string, systemReminder = false): AgentRuntimeUserInput {
   return {
     message: {
@@ -382,6 +401,7 @@ beforeEach(() => {
   mocks.getShellEnv.mockResolvedValue({ PATH: '/opt/homebrew/bin:/usr/bin' })
   mocks.isStreaming = false
   mocks.collectMediaNotes = null
+  mocks.analyzeMedia.mockReset()
   mocks.steeringMode = 'one-at-a-time'
   mocks.sessionId = SESSION_ID
   mocks.sessionFile = SESSION_FILE
@@ -1538,6 +1558,44 @@ describe('PiRuntimeConnection', () => {
     expect(finished.find((event) => event.type === 'steer-undelivered')).toBeUndefined()
     expect(finished.at(-1)?.type).toBe('turn-complete')
   })
+
+  it.each(['send', 'redirect'] as const)(
+    'close() during %s aborts the active media file and does not start the next attachment',
+    async (delivery) => {
+      const firstPath = path.join(tmpdir(), 'cherry-pi-media-first.wav')
+      const secondPath = path.join(tmpdir(), 'cherry-pi-media-second.mp4')
+      const media = twoMediaInput(firstPath, secondPath)
+      const first = createDeferred<string>()
+      const started: string[] = []
+      let activeSignal: AbortSignal | undefined
+      mocks.analyzeMedia.mockImplementation(async (file: { path?: string }, signal?: AbortSignal) => {
+        started.push(file.path ?? '')
+        if (started.length === 1) {
+          activeSignal = signal
+          return first.promise
+        }
+        return 'second attachment'
+      })
+      if (delivery === 'redirect') mocks.isStreaming = true
+      const conn = await new PiRuntimeConnection(input).start()
+      if (delivery === 'redirect') expect(conn.redirect(media)).toBe(true)
+      else conn.send(media)
+
+      expect(started).toEqual([firstPath])
+      expect(activeSignal?.aborted).toBe(false)
+
+      await conn.close()
+      expect(activeSignal?.aborted).toBe(true)
+
+      first.resolve('first transcript')
+      await first.promise
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(started).toEqual([firstPath])
+      expect(mocks.prompt).not.toHaveBeenCalled()
+      expect(mocks.steer).not.toHaveBeenCalled()
+    }
+  )
 
   it('surfaces steer rejection as an error and un-stashes the input', async () => {
     mocks.isStreaming = true

@@ -31,12 +31,16 @@ export function hasAgentMediaAttachment(message: AgentSessionMessageEntity): boo
 /**
  * Compact analysis blocks for audio and video on an agent user turn.
  * The original path or read handle stays in the prompt separately.
- * A failed or unusable analysis stops the turn.
+ * A failed, unusable, or aborted analysis stops the turn before the next attachment starts.
  */
-export async function collectAgentMediaNotes(message: AgentSessionMessageEntity): Promise<string[]> {
+export async function collectAgentMediaNotes(
+  message: AgentSessionMessageEntity,
+  signal?: AbortSignal
+): Promise<string[]> {
   const notes: string[] = []
   for (const part of fileParts(message)) {
     if (!isAudioOrVideoFilePart(part)) continue
+    signal?.throwIfAborted()
     const name = part.filename?.trim() || 'file'
     const entryId = readCherryMeta(part)?.fileEntryId
     try {
@@ -46,7 +50,7 @@ export async function collectAgentMediaNotes(message: AgentSessionMessageEntity)
           ? { kind: 'path' as const, path: AbsoluteFilePathSchema.parse(fileURLToPath(part.url)) }
           : null
       if (!file) throw new NonNativeMediaAnalysisError()
-      const text = await application.get('MediaAnalysisService').analyzeToCompactText(file)
+      const text = await application.get('MediaAnalysisService').analyzeToCompactText(file, signal)
       notes.push(`Attached file "${name}":\n${text}`)
     } catch (error) {
       if (isAbortError(error) || error instanceof NonNativeMediaAnalysisError) throw error

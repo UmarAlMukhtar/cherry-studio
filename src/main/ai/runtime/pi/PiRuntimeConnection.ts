@@ -165,6 +165,8 @@ export class PiRuntimeConnection implements AgentRuntimeConnection {
   private lastStopReason?: string
   private lastAgentError?: string
   private closed = false
+  /** Aborted on close so send and redirect stop in-flight media analysis before the next file. */
+  private readonly mediaAnalysisController = new AbortController()
   /** Injected model id (pi `apiModelId`), stamped on context-usage so the renderer's
    *  per-model usage filter matches the composer's model candidates. */
   private modelId = ''
@@ -530,7 +532,7 @@ export class PiRuntimeConnection implements AgentRuntimeConnection {
       return
     }
 
-    void collectAgentMediaNotes(input.message)
+    void collectAgentMediaNotes(input.message, this.mediaAnalysisController.signal)
       .then((notes) => {
         if (this.closed) return
         deliver(buildAgentUserContent(input.message, notes))
@@ -566,7 +568,7 @@ export class PiRuntimeConnection implements AgentRuntimeConnection {
       return true
     }
 
-    void collectAgentMediaNotes(input.message)
+    void collectAgentMediaNotes(input.message, this.mediaAnalysisController.signal)
       .then((notes) => {
         if (this.closed) return
         deliver(buildAgentUserContent(input.message, notes))
@@ -657,6 +659,7 @@ export class PiRuntimeConnection implements AgentRuntimeConnection {
 
   close(): Promise<void> {
     this.closed = true
+    this.mediaAnalysisController.abort()
     return (this.closePromise ??= this.finishClose())
   }
 
