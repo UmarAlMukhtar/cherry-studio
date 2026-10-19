@@ -9,6 +9,7 @@ import { mockMainLoggerService } from '@test-mocks/MainLoggerService'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createAssistantFileAttachmentHandle } from '@main/ai/messages/assistantFileAttachments'
+import { collectAgentMediaNotes } from '@main/ai/runtime/agentMediaPreface'
 import { MODEL_CAPABILITY } from '@shared/data/types/model'
 
 import type { RuntimeForkResult } from '../../fork'
@@ -1687,6 +1688,25 @@ describe('ClaudeCodeRuntimeDriver', () => {
     rejectFirst(new Error('media worker interrupted'))
     await expect(send).rejects.toBe('agent-runtime-closed')
     expect(started).toEqual(['first'])
+  })
+
+  it('discards media analysis that resolves after cancellation', async () => {
+    let resolveAnalysis!: (text: string) => void
+    mocks.analyzeMedia.mockImplementation(() => new Promise<string>((resolve) => (resolveAnalysis = resolve)))
+    const controller = new AbortController()
+    const notes = collectAgentMediaNotes(
+      {
+        ...userMessage(),
+        data: {
+          parts: [{ type: 'file', url: 'file:///tmp/clip.mp4', mediaType: 'video/mp4', filename: 'clip.mp4' }]
+        }
+      },
+      controller.signal
+    )
+
+    controller.abort('agent-runtime-closed')
+    resolveAnalysis('late transcript')
+    await expect(notes).rejects.toBe('agent-runtime-closed')
   })
 
   it('keeps a composer-token media file on the read handle and a stale token on the path', async () => {
