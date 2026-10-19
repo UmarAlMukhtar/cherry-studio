@@ -716,7 +716,7 @@ export class AiService extends BaseService {
           signal,
           primaryUniqueModelId: model.id,
           primaryHasTools: !!tools && Object.keys(tools).length > 0,
-          requiredNativeFileSupport: resolveRequiredNativeFileSupport(request.messages, nativeFileSupport),
+          requiredNativeFileSupport: resolveRequiredNativeFileSupport(preparedMessages, nativeFileSupport),
           extraFeatures,
           retryPolicy,
           createUsagePlugin: ({ provider, model, sdkModelId, credentialReceipt }) =>
