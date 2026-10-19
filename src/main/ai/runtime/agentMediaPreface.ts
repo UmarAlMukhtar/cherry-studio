@@ -53,6 +53,7 @@ export async function collectAgentMediaNotes(
       const text = await application.get('MediaAnalysisService').analyzeToCompactText(file, signal)
       notes.push(`Attached file "${name}":\n${text}`)
     } catch (error) {
+      signal?.throwIfAborted()
       if (isAbortError(error) || error instanceof NonNativeMediaAnalysisError) throw error
       throw new NonNativeMediaAnalysisError()
     }

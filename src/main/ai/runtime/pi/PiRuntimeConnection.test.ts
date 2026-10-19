@@ -1543,6 +1543,43 @@ describe('PiRuntimeConnection', () => {
     expect(mocks.steer).not.toHaveBeenCalled()
   })
 
+  it('cancels abandoned media preparation before replaying an undelivered steer', async () => {
+    const firstPath = path.join(tmpdir(), 'cherry-pi-replay-first.wav')
+    const secondPath = path.join(tmpdir(), 'cherry-pi-replay-second.mp4')
+    const steer = twoMediaInput(firstPath, secondPath)
+    const first = createDeferred<string>()
+    const started: string[] = []
+    let staleSignal: AbortSignal | undefined
+    mocks.analyzeMedia.mockImplementation(async (file: { path?: string }, signal?: AbortSignal) => {
+      started.push(file.path ?? '')
+      if (started.length === 1) {
+        staleSignal = signal
+        return first.promise
+      }
+      return 'fresh transcript'
+    })
+    mocks.isStreaming = true
+    const conn = await new PiRuntimeConnection(input).start()
+
+    expect(conn.redirect(steer)).toBe(true)
+    expect(started).toEqual([firstPath])
+    mocks.isStreaming = false
+    mocks.subscribeCb!({ type: 'agent_end', messages: [], willRetry: false } as unknown as AgentSessionEvent)
+    const events = await collectUntilTerminal(conn.events)
+    expect(events.find((event) => event.type === 'steer-undelivered')).toMatchObject({ inputs: [steer] })
+    expect(staleSignal?.aborted).toBe(true)
+
+    first.resolve('stale transcript')
+    await first.promise
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(started).toEqual([firstPath])
+
+    conn.send(steer)
+    await vi.waitFor(() => expect(started).toEqual([firstPath, firstPath, secondPath]))
+    expect(mocks.prompt).toHaveBeenCalledTimes(1)
+    await conn.close()
+  })
+
   it('reports media-analysis failure and drops the reservation while the turn is active', async () => {
     mocks.isStreaming = true
     mocks.collectMediaNotes = () => Promise.reject(new Error('analysis failed'))

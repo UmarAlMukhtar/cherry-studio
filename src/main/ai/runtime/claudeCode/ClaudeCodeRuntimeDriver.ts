@@ -474,8 +474,10 @@ class ClaudeCodeRuntimeConnection implements AgentRuntimeConnection {
     const sdkMessage = await toSdkUserMessage(input.message, this.resumeToken, input.systemReminder, {
       supportsAttachmentReads: this.assistantFileToolsEnabled,
       readOnlyAttachmentMedia: this.assistantFileToolsEnabled && !this.hostAssistantServerMounted,
-      supportsImages: resolveModelImageSupport(this.input.modelId)
+      supportsImages: resolveModelImageSupport(this.input.modelId),
+      signal: this.abortController.signal
     })
+    this.abortController.signal.throwIfAborted()
     this.sdkInputQueue.push(sdkMessage)
   }
 
@@ -1112,10 +1114,22 @@ async function toSdkUserMessage(
   {
     supportsAttachmentReads = false,
     supportsImages = true,
-    readOnlyAttachmentMedia = false
-  }: { supportsAttachmentReads?: boolean; supportsImages?: boolean; readOnlyAttachmentMedia?: boolean } = {}
+    readOnlyAttachmentMedia = false,
+    signal
+  }: {
+    supportsAttachmentReads?: boolean
+    supportsImages?: boolean
+    readOnlyAttachmentMedia?: boolean
+    signal?: AbortSignal
+  } = {}
 ): Promise<SDKUserMessage> {
-  let content = await materializeUserContent(message, supportsImages, supportsAttachmentReads, readOnlyAttachmentMedia)
+  let content = await materializeUserContent(
+    message,
+    supportsImages,
+    supportsAttachmentReads,
+    readOnlyAttachmentMedia,
+    signal
+  )
   if (systemReminder) {
     content = applySteerReminder(content)
   }
@@ -1163,9 +1177,10 @@ async function materializeUserContent(
   message: AgentSessionMessageEntity,
   supportsImages: boolean,
   supportsAttachmentReads: boolean,
-  readOnlyAttachmentMedia: boolean
+  readOnlyAttachmentMedia: boolean,
+  signal?: AbortSignal
 ): Promise<SDKUserMessage['message']['content']> {
-  const mediaNotes = await collectAgentMediaNotes(message)
+  const mediaNotes = await collectAgentMediaNotes(message, signal)
   const parts = message.data?.parts ?? []
   const firstPartyFileParts = parts.filter(
     (part): part is FileUIPart => part.type === 'file' && Boolean(readCherryMeta(part)?.fileEntryId)

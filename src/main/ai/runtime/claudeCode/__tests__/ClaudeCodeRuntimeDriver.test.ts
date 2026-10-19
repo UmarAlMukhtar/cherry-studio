@@ -1600,6 +1600,13 @@ describe('ClaudeCodeRuntimeDriver', () => {
             },
             {
               type: 'file',
+              url: 'file:///tmp/voice.aif',
+              mediaType: 'audio/x-aiff',
+              filename: 'voice.aif',
+              providerMetadata: { cherry: { fileEntryId: 'entry-aif' } }
+            },
+            {
+              type: 'file',
               url: 'file:///tmp/spec.pdf',
               mediaType: 'application/pdf',
               filename: 'spec.pdf',
@@ -1611,20 +1618,75 @@ describe('ClaudeCodeRuntimeDriver', () => {
     })
 
     const videoHandle = createAssistantFileAttachmentHandle('entry-video')
+    const aifHandle = createAssistantFileAttachmentHandle('entry-aif')
     const pdfHandle = createAssistantFileAttachmentHandle('entry-secret')
     const content = (await nextInput).value.message.content as string
 
     expect(content).toContain('Attached file "clip.mp4":\n# Media analysis\n[0:00] spoken line')
     expect(content.indexOf('[0:00] spoken line')).toBeLessThan(content.indexOf('mcp__assistant-files__read_file'))
     expect(content).toContain(
-      `Attached audio and video (call mcp__assistant-files__read_file with the opaque attachment handle; the tool returns timestamped analysis):\n- "clip.mp4" (handle: ${videoHandle})`
+      `Attached audio and video (call mcp__assistant-files__read_file with the opaque attachment handle; the tool returns timestamped analysis):\n- "clip.mp4" (handle: ${videoHandle})\n- "voice.aif" (handle: ${aifHandle})`
     )
     expect(content).not.toContain('/managed/entry-video')
+    expect(content).not.toContain('/managed/entry-aif')
     expect(content).toContain('Attached files (read them with your tools using these absolute paths):')
     expect(content).toContain('- "spec.pdf": /managed/entry-secret')
     expect(content).toContain(`- "spec.pdf" (handle: ${pdfHandle})`)
     expect(content).not.toContain(`- "clip.mp4" (handle: ${videoHandle})\n- "spec.pdf"`)
     void connection.close()
+  })
+
+  it('stops preparing later media attachments when the Claude connection closes', async () => {
+    const queryQueue = createAsyncQueue<any>()
+    mocks.createClaudeQuery.mockReturnValue({ ...queryQueue.iterable, interrupt: vi.fn(), close: vi.fn() })
+    const connection = await new ClaudeCodeRuntimeDriver().connect({
+      sessionId: 'session-1',
+      agentId: 'agent-1',
+      modelId: 'claude-code::sonnet'
+    })
+    let rejectFirst!: (error: Error) => void
+    const first = new Promise<string>((_resolve, reject) => (rejectFirst = reject))
+    const started: string[] = []
+    let signal: AbortSignal | undefined
+    mocks.analyzeMedia.mockImplementation(async (file: { entryId: string }, currentSignal?: AbortSignal) => {
+      started.push(file.entryId)
+      if (file.entryId === 'first') {
+        signal = currentSignal
+        return first
+      }
+      return 'second transcript'
+    })
+
+    const send = connection.send({
+      message: {
+        ...userMessage(),
+        data: {
+          parts: [
+            {
+              type: 'file',
+              url: 'file:///tmp/first.wav',
+              mediaType: 'audio/wav',
+              filename: 'first.wav',
+              providerMetadata: { cherry: { fileEntryId: 'first' } }
+            },
+            {
+              type: 'file',
+              url: 'file:///tmp/second.mp4',
+              mediaType: 'video/mp4',
+              filename: 'second.mp4',
+              providerMetadata: { cherry: { fileEntryId: 'second' } }
+            }
+          ]
+        }
+      }
+    })
+    expect(started).toEqual(['first'])
+
+    await connection.close()
+    expect(signal?.aborted).toBe(true)
+    rejectFirst(new Error('media worker interrupted'))
+    await expect(send).rejects.toBe('agent-runtime-closed')
+    expect(started).toEqual(['first'])
   })
 
   it('keeps a composer-token media file on the read handle and a stale token on the path', async () => {

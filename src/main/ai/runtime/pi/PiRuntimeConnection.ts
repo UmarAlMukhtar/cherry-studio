@@ -146,6 +146,7 @@ function mergePiBashExecutionEnv(env: NodeJS.ProcessEnv): Record<string, string>
 
 interface PendingSteer {
   input: AgentRuntimeUserInput
+  mediaController?: AbortController
 }
 
 export class PiRuntimeConnection implements AgentRuntimeConnection {
@@ -573,7 +574,11 @@ export class PiRuntimeConnection implements AgentRuntimeConnection {
       return true
     }
 
-    void collectAgentMediaNotes(input.message, this.mediaAnalysisController.signal)
+    pending.mediaController = new AbortController()
+    void collectAgentMediaNotes(
+      input.message,
+      AbortSignal.any([this.mediaAnalysisController.signal, pending.mediaController.signal])
+    )
       .then((notes) => {
         if (this.closed) return
         deliver(buildAgentUserContent(input.message, notes))
@@ -741,7 +746,9 @@ export class PiRuntimeConnection implements AgentRuntimeConnection {
     if (this.closed) return
     this.promptRunActive = false
     this.maybeEmitResumeToken()
-    const undelivered = this.pendingSteers.splice(0).map((pending) => pending.input)
+    const pending = this.pendingSteers.splice(0)
+    for (const steer of pending) steer.mediaController?.abort()
+    const undelivered = pending.map((steer) => steer.input)
     this.submittedSteers.length = 0
     if (undelivered.length > 0) {
       // pi does not drain its steering queue when a run ends. The host owns re-queuing.

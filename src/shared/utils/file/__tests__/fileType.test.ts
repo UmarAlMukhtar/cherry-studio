@@ -46,6 +46,8 @@ describe('getFileTypeByExt', () => {
   it('classifies AIFF as audio so media readers do not extract it as a document', () => {
     expect(getFileTypeByExt('aiff')).toBe('audio')
     expect(getFileTypeByExt('.aiff')).toBe('audio')
+    expect(getFileTypeByExt('aif')).toBe('audio')
+    expect(getFileTypeByExt('.aif')).toBe('audio')
     expect(getFileTypeByExt('.AIFF')).toBe('audio')
   })
 
