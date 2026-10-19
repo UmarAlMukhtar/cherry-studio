@@ -27,6 +27,7 @@
 
 import { isAbortError } from '@ai-sdk/provider-utils'
 import type { UIMessage } from 'ai'
+import mime from 'mime'
 
 import { application } from '@application'
 import { loggerService } from '@logger'
@@ -150,13 +151,24 @@ function isNative(ext: string, fileType: FileType, ns: NativeFileSupport, mediaT
   return false
 }
 
+/** Unresolved audio is treated as accepted, so a recognized extension carries its MIME. */
+function dispatchAudioMediaType(bareExt: string): string | undefined {
+  const normalizedExt = bareExt.replace(/^\./, '').toLowerCase()
+  if (getFileTypeByExt(normalizedExt) !== FILE_TYPE.AUDIO) return undefined
+  return mime.getType(normalizedExt) ?? undefined
+}
+
 /** WebM is audio or video only after probe. Unambiguous extensions keep their static type. */
 async function resolveAttachmentFileType(
   entryId: string,
   bareExt: string,
   signal?: AbortSignal
 ): Promise<{ fileType: FileType; mediaType?: string }> {
-  if (bareExt.replace(/^\./, '').toLowerCase() !== 'webm') return { fileType: getFileTypeByExt(bareExt) }
+  if (bareExt.replace(/^\./, '').toLowerCase() !== 'webm') {
+    const fileType = getFileTypeByExt(bareExt)
+    const mediaType = dispatchAudioMediaType(bareExt)
+    return mediaType ? { fileType, mediaType } : { fileType }
+  }
   const probe = await application.get('MediaAnalysisService').probe({ kind: 'entry', entryId }, signal)
   // A .webm name can still be Matroska or MP4. Kind chooses the capability; probe.mime is dispatched.
   if (probe.kind === 'video') return { fileType: FILE_TYPE.VIDEO, mediaType: probe.mime }
