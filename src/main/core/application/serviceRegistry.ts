@@ -25,6 +25,7 @@ import {
 } from '@main/ai/runtime/claudeCode'
 import { AiStreamManager } from '@main/ai/streamManager'
 import { VoiceSessionService } from '@main/ai/voice/VoiceSessionService'
+import { RuntimeActivityService } from '@main/core/application/RuntimeActivityService'
 import { JobManager } from '@main/core/job/JobManager'
 import type { ServiceConstructor } from '@main/core/lifecycle'
 import { PowerService } from '@main/core/power/PowerService'
@@ -75,6 +76,7 @@ import { ProxyService } from '@main/services/proxy/ProxyService'
 import { PythonService } from '@main/services/PythonService'
 import { QuickAssistantService } from '@main/services/QuickAssistantService'
 import { AttachmentPresenceService, RemoteAccessService } from '@main/services/remoteAccess'
+import { RuntimeQuitConfirmationService } from '@main/services/RuntimeQuitConfirmationService'
 import { ScreenshotOverlayService } from '@main/services/screenshot'
 import { ScreenshotChatService } from '@main/services/ScreenshotChatService'
 import { SelectionService } from '@main/services/selection/SelectionService'
@@ -144,6 +146,8 @@ export const services = {
   MediaFfmpegService,
   MediaAnalysisService,
   PowerService,
+  RuntimeActivityService,
+  RuntimeQuitConfirmationService,
   SelectionService,
   ShortcutService,
   ThemeService,
