@@ -417,7 +417,7 @@ export const mediaFfmpegHandlers: UtilityProcessHandlers<MediaFfmpegContract> = 
     const prefix = await fileHashPrefix(filePath)
     const wavPath = join(outputDir, `${prefix}-16k-mono.wav`)
     const map = await sourceAudioMap(filePath, signal, logger, pidRegistryPath)
-    const args = ['-y', '-i', filePath]
+    const args = ['-y', '-i', filePath, '-map_metadata', '-1']
     if (map) args.push('-map', map)
     args.push('-vn', '-af', 'aresample=16000:async=1', '-ac', '1', '-c:a', 'pcm_s16le', '-f', 'wav', wavPath)
 
