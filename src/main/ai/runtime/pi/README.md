@@ -1,7 +1,12 @@
 # Pi integration
 
-`PiRuntimeConnection` is the desktop's existing native Pi connection. The extracted runtime package
-is developed separately and is not yet used by that connection.
+`PiRuntimeConnection` connects desktop root sessions through `createPiRuntime` from
+`@cherrystudio/agent-runtime-pi`. Cherry owns product messages and branch bindings; Pi owns
+native history, execution, and compaction. Independent desktop child projections and Durable
+desktop integration remain separate work.
+
+The Pi adapter is a production dependency loaded with dynamic `import()`. Keep its ESM-only native
+dependencies outside the bundled CommonJS Main entry; a static import fails during Electron startup.
 
 ## AI SDK model binding
 
@@ -18,6 +23,29 @@ plugins. It must not install another agent loop or replace Pi's context with Che
 `aiSdkProvider.ts` converts streaming text, reasoning, tool calls, errors and usage back to native
 Pi events. `aiSdkMessages.ts` applies Pi's replay rules (`transformMessages`) before conversion.
 `aiSdkMetadata.ts` keeps provider metadata in Pi signature fields.
+
+## Desktop ownership
+
+`piModelPort.ts` calls Cherry's `buildAgentParams` and ai-core for each native model request.
+This preserves provider configuration, credentials, request options, middleware and one billing
+owner without entering `AiService`'s agent-session route. Pi receives tools without AI SDK executors;
+only Pi executes them. Reasoning, tier and fast-mode changes rebuild the binding before the next turn.
+
+`ThreadProjection` converts ordered runtime items into UI chunks. A snapshot establishes its baseline;
+it never replays recovered content into the product archive. Tool items use the Pi facet's opaque
+lookup and the existing tool renderer. Observation loss fails the turn and retires the owner.
+
+Before dispatch, Main records submission identity and facts on the existing user row. Native placement
+and settlement update those facts; final assistant persistence commits response associations in the
+same database transaction. Attachments retain Cherry's existing file-path input representation.
+Unmapped provider output fails explicitly instead of silently losing content.
+
+A root opens only the native identity bound to its captured product branch. Confirmed or previously
+submitted contexts require one existing, identity-checked file. Only a never-submitted creation intent
+may have no file yet; Pi flushes lazily and Cherry publishes its resume token after that evidence.
+There is no reconstruction from product messages. The connection stays owned while idle until explicit
+retirement or application shutdown; stopping aborts native work and flushes observed input facts.
+Queued inputs Pi never placed are marked aborted and are not automatically resent after a stop/error.
 
 ## Host-facing contracts
 
@@ -62,10 +90,10 @@ Pi events. `aiSdkMessages.ts` applies Pi's replay rules (`transformMessages`) be
   not expose response headers before the body is consumed.
 - Tool call ids from another provider are replayed as-is (no `normalizeToolCallId`). A provider
   with stricter id rules may reject history recorded by a different one.
-- The CherryIN Anthropic endpoint omits the thinking block of tool-only replies but requires one on
-  replay; Cherry's Pi runtime rebuilds it from the response id (`piThinkingReplay.ts`). The native
-  session keeps each reply's `responseId`, but requests do not expose it to the port yet; how they
-  will is decided when the host is wired up.
+CherryIN Anthropic tool-only replay uses the stored `responseId` to restore its required thinking
+block in `piModelPort.ts`. The bridge forwards this metadata only for the same provider/API/model.
 
 The `aiSdk*.test.ts` integration tests cover the bridge with real AI SDK streaming and a local HTTP
-provider. They do not establish live-provider or desktop integration acceptance.
+provider. `PiRuntimeConnection.test.ts` covers the real native loop and SQLite associations; `piModelPort.test.ts`
+exercises the production provider path with a local HTTP server. These are separate from Electron
+and live-provider acceptance.

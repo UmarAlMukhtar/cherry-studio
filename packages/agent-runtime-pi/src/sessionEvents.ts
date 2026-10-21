@@ -20,6 +20,7 @@ export type AgentRuntimeEvent =
       inputIds: readonly string[]
       entryId: string
       stopReason: AssistantMessage['stopReason']
+      hasToolCalls: boolean
       aborted: boolean
       errorMessage?: string
     }
@@ -61,6 +62,7 @@ export class SessionEvents {
           inputIds: [...event.inputIds],
           entryId: event.entryId,
           stopReason: event.message.stopReason,
+          hasToolCalls: event.message.content.some((part) => part.type === 'toolCall'),
           aborted: event.aborted,
           ...(event.message.errorMessage === undefined ? {} : { errorMessage: event.message.errorMessage })
         })

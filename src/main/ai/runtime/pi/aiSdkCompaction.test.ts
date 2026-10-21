@@ -313,7 +313,10 @@ describe('host summarizer', () => {
       (
         await generateText({
           model: summaryModel,
-          messages: [...toModelMessages(messages, model), { role: 'user', content: 'Summarize the conversation.' }],
+          messages: [
+            ...(await toModelMessages(messages, model)),
+            { role: 'user', content: 'Summarize the conversation.' }
+          ],
           abortSignal: signal,
           maxRetries: 0
         })

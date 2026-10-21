@@ -1,12 +1,4 @@
-import {
-  type Api,
-  getCurrentTools,
-  type Model,
-  type Message,
-  type ToolResultMessage,
-  type TranscriptContext
-} from '@earendil-works/pi-ai'
-import { transformMessages } from '@earendil-works/pi-ai/api/transform-messages'
+import type { Api, Model, Message, ToolResultMessage, TranscriptContext } from '@earendil-works/pi-ai'
 import {
   type AssistantModelMessage,
   jsonSchema,
@@ -40,7 +32,8 @@ function toToolResultOutput(message: ToolResultMessage): ToolResultOutput {
  * Pi's `transformMessages` first applies its replay rules: signatures and reasoning survive only for
  * the same provider/api/model, orphan tool calls get synthetic results, failed turns are skipped.
  */
-export function toModelMessages(history: Message[], model: Model<Api>): ModelMessage[] {
+export async function toModelMessages(history: Message[], model: Model<Api>): Promise<ModelMessage[]> {
+  const { transformMessages } = await import('@earendil-works/pi-ai/api/transform-messages')
   const messages: ModelMessage[] = []
   for (const message of transformMessages(history, model)) {
     switch (message.role) {
@@ -80,7 +73,15 @@ export function toModelMessages(history: Message[], model: Model<Api>): ModelMes
               }
           }
         })
-        if (content.length > 0) messages.push({ role: 'assistant', content })
+        if (content.length > 0)
+          messages.push({
+            role: 'assistant',
+            content,
+            ...(message.responseId &&
+              message.provider === model.provider &&
+              message.api === model.api &&
+              message.model === model.id && { providerOptions: { cherryPi: { responseId: message.responseId } } })
+          })
         break
       }
       case 'toolResult':
@@ -101,7 +102,8 @@ export function toModelMessages(history: Message[], model: Model<Api>): ModelMes
   return messages
 }
 
-export function toToolSet(context: TranscriptContext): ToolSet {
+export async function toToolSet(context: TranscriptContext): Promise<ToolSet> {
+  const { getCurrentTools } = await import('@earendil-works/pi-ai')
   return Object.fromEntries(
     getCurrentTools(context.messages).map((piTool) => [
       piTool.name,

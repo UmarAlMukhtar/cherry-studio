@@ -1,7 +1,5 @@
-import { InMemoryCredentialStore } from '@earendil-works/pi-ai'
-import { type ExtensionFactory, ModelRuntime } from '@earendil-works/pi-coding-agent'
+import type { ExtensionFactory } from '@earendil-works/pi-coding-agent'
 
-import { setSessionRequirements } from '@cherrystudio/agent-runtime-pi'
 import { parseUniqueModelId, type UniqueModelId } from '@shared/data/types/model'
 
 import { type AiSdkModelSpec, type AiSdkProviderOptions, createAiSdkProvider } from './aiSdkProvider'
@@ -22,6 +20,11 @@ export type AiSdkModel = Omit<AiSdkModelSpec, 'id'> & { id: UniqueModelId }
 export async function createAiSdkModelBinding<TRequestOptions>(
   options: Omit<AiSdkProviderOptions<TRequestOptions>, 'models' | 'onInvalidToolCall'> & { model: AiSdkModel }
 ) {
+  const [{ InMemoryCredentialStore }, { ModelRuntime }, { setSessionRequirements }] = await Promise.all([
+    import('@earendil-works/pi-ai'),
+    import('@earendil-works/pi-coding-agent'),
+    import('@cherrystudio/agent-runtime-pi')
+  ])
   const invalidCalls = new Map<string, Map<string, string>>()
   const guard: ExtensionFactory = (pi) => {
     pi.on('turn_start', (_event, ctx) => {
@@ -44,7 +47,7 @@ export async function createAiSdkModelBinding<TRequestOptions>(
   const modelSpec: AiSdkModelSpec = { ...options.model, id: modelId }
   modelRuntime.registerProvider(
     provider,
-    createAiSdkProvider({
+    await createAiSdkProvider({
       ...options,
       models: [modelSpec],
       onInvalidToolCall(call, toolCallId, reason) {

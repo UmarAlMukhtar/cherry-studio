@@ -4,9 +4,6 @@ import {
   type Api,
   type AssistantMessage,
   type AssistantMessageEventStream,
-  calculateCost,
-  createAssistantMessageEventStream,
-  getCurrentSystemPrompt,
   type JsonObject,
   type Model,
   type SimpleStreamOptions,
@@ -17,7 +14,8 @@ import {
   type TranscriptContext,
   type Usage
 } from '@earendil-works/pi-ai'
-import { clampMaxTokensToContext } from '@earendil-works/pi-ai/api/simple-options'
+import type * as PiAi from '@earendil-works/pi-ai'
+import type { clampMaxTokensToContext as ClampMaxTokens } from '@earendil-works/pi-ai/api/simple-options'
 import type { ProviderConfig, ProviderModelConfig } from '@earendil-works/pi-coding-agent'
 import type { FinishReason, LanguageModelUsage, ProviderMetadata, TextStreamPart, ToolSet } from 'ai'
 
@@ -59,7 +57,7 @@ const isJsonObject = (value: unknown): value is JsonObject =>
  * Usage reported to Pi feeds its context accounting and compaction only. The host's AI SDK call
  * has already accounted the same tokens, so usage read back from Pi must not be billed again.
  */
-function toPiUsage(usage: LanguageModelUsage, model: Model<Api>): Usage {
+function toPiUsage(usage: LanguageModelUsage, model: Model<Api>, calculateCost: typeof PiAi.calculateCost): Usage {
   const cacheRead = usage.inputTokenDetails?.cacheReadTokens ?? 0
   const cacheWrite = usage.inputTokenDetails?.cacheWriteTokens ?? 0
   const input = usage.inputTokenDetails?.noCacheTokens ?? Math.max(0, (usage.inputTokens ?? 0) - cacheRead - cacheWrite)
@@ -107,14 +105,19 @@ function toPiStopReason(reason: FinishReason): StopReason {
  * A Pi provider whose every model request is one call to the host's {@link ModelCallPort}.
  * Pi's own retry must stay disabled: retries belong to the host's AI SDK layer.
  */
-export function createAiSdkProvider<TRequestOptions>(options: AiSdkProviderOptions<TRequestOptions>): ProviderConfig {
+export async function createAiSdkProvider<TRequestOptions>(
+  options: AiSdkProviderOptions<TRequestOptions>
+): Promise<ProviderConfig> {
+  const native = await import('@earendil-works/pi-ai')
+  const { clampMaxTokensToContext } = await import('@earendil-works/pi-ai/api/simple-options')
   return {
     api: AI_SDK_API,
     // Pi requires both when models are defined; requests go through the port, never to this URL.
     baseUrl: 'https://ai-sdk-port.invalid',
     apiKey: 'unused',
     models: options.models.map((model) => ({ ...model, api: AI_SDK_API })),
-    streamSimple: (model, context, streamOptions) => streamModelCall(options, model, context, streamOptions)
+    streamSimple: (model, context, streamOptions) =>
+      streamModelCall(options, model, context, streamOptions, native, clampMaxTokensToContext)
   }
 }
 
@@ -122,9 +125,11 @@ function streamModelCall<TRequestOptions>(
   provider: AiSdkProviderOptions<TRequestOptions>,
   model: Model<Api>,
   context: TranscriptContext,
-  options: SimpleStreamOptions | undefined
+  options: SimpleStreamOptions | undefined,
+  native: typeof PiAi,
+  clampMaxTokensToContext: typeof ClampMaxTokens
 ): AssistantMessageEventStream {
-  const stream = createAssistantMessageEventStream()
+  const stream = native.createAssistantMessageEventStream()
   const output: AssistantMessage = {
     role: 'assistant',
     content: [],
@@ -160,9 +165,9 @@ function streamModelCall<TRequestOptions>(
     try {
       let request: ModelCallRequest<TRequestOptions> = {
         ...call,
-        system: getCurrentSystemPrompt(context.messages) || undefined,
-        messages: toModelMessages(context.messages, model),
-        tools: toToolSet(context),
+        system: native.getCurrentSystemPrompt(context.messages) || undefined,
+        messages: await toModelMessages(context.messages, model),
+        tools: await toToolSet(context),
         toolChoice: options?.toolChoice,
         // As every built-in Pi provider: Pi's agent passes no cap, so the model's ceiling, fitted to the context.
         maxOutputTokens: clampMaxTokensToContext(model, context, options?.maxTokens ?? model.maxTokens),
@@ -285,7 +290,7 @@ function streamModelCall<TRequestOptions>(
             break
           case 'finish-step':
             finish = part
-            output.usage = toPiUsage(part.usage, model)
+            output.usage = toPiUsage(part.usage, model, native.calculateCost)
             output.stopReason = toPiStopReason(part.finishReason)
             output.rawStopReason = part.rawFinishReason
             output.responseId = part.response.id

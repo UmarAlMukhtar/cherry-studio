@@ -30,7 +30,8 @@ The builder uses in-memory settings, disables resource discovery, and accepts
 explicit tools, extension factories, system prompts, workspace context files and skill directories.
 Without a `systemPrompt` Pi's own prompt is used, and Pi appends a `<cwd>` section either way. No
 built-in tool is enabled unless `builtinTools` names it. Workspace `AGENTS.md` / `CLAUDE.md` files
-load only with `contextFiles: true`, and skills only from the host's `skillPaths`.
+load only with `contextFiles: true` (explicit project trust), and skills only from the host's
+`skillPaths`. `excludeTools` removes disabled tools from the native loadout.
 `dispose()` aborts execution, lets extensions handle `session_shutdown`, then disposes the session.
 Pi is ESM-only; CommonJS hosts must load the package with dynamic `import()`.
 
@@ -43,7 +44,8 @@ Cherry's AI SDK provider bridge lives in `src/main/ai/runtime/pi/aiSdkModelBindi
 native model configuration and, through session requirements, its tool-call guard ahead of approval
 handlers. AI SDK conversion, retries, provider metadata and request side channels stay in Cherry.
 
-This package is not wired into the desktop runtime yet. The integration tests live with Cherry's
+Cherry's desktop root Pi connection uses this package through `create/open/observe/input.submit`.
+Independent desktop child projections are not yet connected. Integration tests live with Cherry's
 bridge; `tests/nativeSession.test.ts` verifies native provider execution and borrowed-runtime ownership.
 `tests/runtime.test.ts` exercises public child discovery, input and observation through native
 execution, including continuation, release, once-only native reporting, and shutdown during child loading.
@@ -57,7 +59,7 @@ pnpm --filter @cherrystudio/agent-runtime-pi typecheck
 ## Native session storage
 
 Pass `sessionManager: SessionManager.create(cwd, sessionDir)` to create a persistent session, or
-`SessionManager.open(file)` to reopen it. Omit the manager for an in-memory session. The host chooses
+`SessionManager.openExisting(file, expectedId, cwd)` to reopen a known association strictly. Omit the manager for an in-memory session. The host chooses
 the location and records the native session ID/file association. Pi writes and reads its own JSONL;
 there is no second transcript schema, message conversion for storage, or host event replay.
 
@@ -73,6 +75,15 @@ existence and verify the native session ID instead of silently replacing it.
 `onEvent` observes copied native entries (`session-append`), compaction start/end, and completed
 turns. These events are for observation; storage works without a listener. A slow listener should
 hand off its work because callbacks run inline. `dispose()` flushes the final observations.
+
+## Pi-specific access
+
+The handle's `pi` facet provides native branch history, context usage, tool metadata and opaque
+item-to-tool-call lookup. These remain Pi-specific, without enlarging the common contract.
+`compact(instructions?)` serializes with input admission and rejects an actively streaming root;
+it does not abort that turn to compact. `cancelQueuedInputs()` is owner-only and idle-only: it clears
+native queued input, records `aborted` for known unplaced inputs, and returns their identities.
+Released access cannot use these controls. Neither operation deletes the native history.
 
 ## Input correlation
 
@@ -95,7 +106,7 @@ and explicit boundary continuations retain it, and errors settle only after nati
 recovery stop. Queued or subsequently placed inputs are excluded from the preceding response.
 
 `input_settled` reports the batch, actual assistant entry/message, and abort flag. The builder
-forwards `input-settled` with typed `stopReason`, native entry ID, input IDs, and optional error.
+forwards `input-settled` with typed `stopReason`, `hasToolCalls`, native entry ID, input IDs, and optional error.
 The common projection links each input's `response` to the observed item. Several inputs may
 share it; assistant messages do not receive a guessed single `inputId`. Normal final replies map
 to `completed`, errors to `failed`, and interruption to `aborted`. Truncation and settlement
